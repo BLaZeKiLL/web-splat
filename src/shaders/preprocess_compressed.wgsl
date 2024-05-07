@@ -105,6 +105,9 @@ struct RenderSettings {
     center: vec3<f32>,
 }
 
+struct PreprocessArgs {
+    batch_start_index: u32
+}
 
 @group(0) @binding(0)
 var<uniform> camera: CameraUniforms;
@@ -134,6 +137,9 @@ var<storage, read_write> sort_dispatch: DispatchIndirect;
 
 @group(3) @binding(0)
 var<uniform> render_settings: RenderSettings;
+
+@group(4) @binding(0)
+var<uniform> preprocess_args: PreprocessArgs;
 
 fn dequantize(value: i32, quantization: Quantization) -> f32 {
     return (f32(value) - f32(quantization.zero_point)) * quantization.scaling;

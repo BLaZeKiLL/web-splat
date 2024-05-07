@@ -155,6 +155,8 @@ impl GaussianRenderer {
             .as_bytes(),
         );
         let depth_buffer = &self.sorter_suff.as_ref().unwrap().sorter_bg_pre;
+
+        // TODO : Run in loop and keep syncing pre_process args
         self.preprocess.run(
             encoder,
             pc,
@@ -340,7 +342,10 @@ impl CameraUniform {
     }
 }
 
-struct PreprocessPipeline(wgpu::ComputePipeline);
+struct PreprocessPipeline { 
+    pipeline: wgpu::ComputePipeline, 
+    args: UniformBuffer<PreProcessArgsUniform> 
+}
 
 impl PreprocessPipeline {
     fn new(device: &wgpu::Device, sh_deg: u32, compressed: bool) -> Self {
@@ -355,6 +360,7 @@ impl PreprocessPipeline {
                 },
                 &GPURSSorter::bind_group_layout_preprocess(device),
                 &UniformBuffer::<SplattingArgsUniform>::bind_group_layout(device),
+                &UniformBuffer::<PreProcessArgsUniform>::bind_group_layout(device)
             ],
             push_constant_ranges: &[],
         });
@@ -369,7 +375,13 @@ impl PreprocessPipeline {
             module: &shader,
             entry_point: "preprocess",
         });
-        Self(pipeline)
+        Self { 
+            pipeline, 
+            args: UniformBuffer::new_default(
+                device,
+                Some("render settings uniform buffer"),
+            ) 
+        }
     }
 
     fn build_shader(sh_deg: u32, compressed: bool) -> String {
@@ -399,11 +411,12 @@ impl PreprocessPipeline {
             label: Some("preprocess compute pass"),
             ..Default::default()
         });
-        pass.set_pipeline(&self.0);
+        pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, camera.bind_group(), &[]);
         pass.set_bind_group(1, pc.bind_group(), &[]);
         pass.set_bind_group(2, &sort_bg, &[]);
         pass.set_bind_group(3, render_settings.bind_group(), &[]);
+        pass.set_bind_group(4, self.args.bind_group(), &[]);
 
         let wgs_x = (pc.num_points() as f32 / 256.0).ceil() as u32;
         pass.dispatch_workgroups(wgs_x, 1, 1);
@@ -769,5 +782,17 @@ impl Default for SplattingArgsUniform {
             scene_extend: 1.,
             _pad: 0,
         }
+    }
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct PreProcessArgsUniform {
+    batch_start_index: u32
+}
+
+impl Default for PreProcessArgsUniform {
+    fn default() -> Self {
+        Self { batch_start_index: 0 }
     }
 }

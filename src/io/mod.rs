@@ -49,11 +49,13 @@ impl GenericGaussianPointCloud {
         f.read_exact(&mut signature)?;
         f.rewind()?;
         if signature.starts_with(PlyReader::<R>::magic_bytes()) {
+            log::info!("Loading PLY");
             let mut ply_reader = PlyReader::new(f)?;
             return ply_reader.read();
         }
         #[cfg(feature = "npz")]
         if signature.starts_with(NpzReader::<R>::magic_bytes()) {
+            log::info!("Loading NPZ");
             let mut reader = BufReader::new(f);
             let mut npz_reader = NpzReader::new(&mut reader)?;
             return npz_reader.read();

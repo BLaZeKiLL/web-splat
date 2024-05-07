@@ -219,6 +219,8 @@ impl WindowContext {
         };
         surface.configure(&device, &config);
 
+        log::info!("Trying to load the point cloud");
+
         let pc_raw = io::GenericGaussianPointCloud::load(pc_file)?;
         let pc = PointCloud::new(&device, pc_raw)?;
         log::info!("loaded point cloud with {:} points", pc.num_points());
@@ -652,7 +654,10 @@ pub async fn open_window<R: Read + Seek + Send + Sync + 'static>(
     scene_file_path: Option<PathBuf>,
 ) {
     #[cfg(not(target_arch = "wasm32"))]
-    env_logger::init();
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .format_timestamp_millis()
+        .init();
     let event_loop = EventLoop::new().unwrap();
 
     let scene = scene_file.and_then(|f| match Scene::from_json(f) {
