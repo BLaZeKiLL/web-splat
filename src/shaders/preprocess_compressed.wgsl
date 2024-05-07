@@ -103,9 +103,6 @@ struct RenderSettings {
     walltime: f32,
     scene_extend: f32,
     center: vec3<f32>,
-}
-
-struct PreprocessArgs {
     batch_start_index: u32
 }
 
@@ -137,9 +134,6 @@ var<storage, read_write> sort_dispatch: DispatchIndirect;
 
 @group(3) @binding(0)
 var<uniform> render_settings: RenderSettings;
-
-@group(4) @binding(0)
-var<uniform> preprocess_args: PreprocessArgs;
 
 fn dequantize(value: i32, quantization: Quantization) -> f32 {
     return (f32(value) - f32(quantization.zero_point)) * quantization.scaling;
@@ -212,7 +206,7 @@ fn evaluate_sh(dir: vec3<f32>, v_idx: u32, sh_deg: u32) -> vec3<f32> {
 
 @compute @workgroup_size(256,1,1)
 fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) wgs: vec3<u32>) {
-    let idx = gid.x;
+    let idx = render_settings.batch_start_index + gid.x;
     if idx >= arrayLength(&vertices) {
         return;
     }

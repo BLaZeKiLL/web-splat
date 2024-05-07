@@ -50,6 +50,7 @@ async fn render_views(
     });
     let mut camera: PerspectiveCamera = cameras[0].clone().into();
     camera.fit_near_far(pc.bbox());
+
     // first render to lazy init sorter stuff
     renderer.prepare(
         &mut encoder,
@@ -71,6 +72,7 @@ async fn render_views(
         },
         &mut None,
     );
+
     {
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("render pass"),
@@ -139,7 +141,9 @@ async fn render_views(
             queue.submit(std::iter::once(encoder.finish()));
         }
     }
+
     device.poll(wgpu::MaintainBase::Wait);
+    
     let end = Instant::now();
     let duration = end - start;
     println!(

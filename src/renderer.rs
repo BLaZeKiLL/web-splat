@@ -132,6 +132,8 @@ impl GaussianRenderer {
         pc: &'a PointCloud,
         render_settings: SplattingArgs,
     ) {
+        log::debug!("Pre-processing!!");
+
         let camera = render_settings.camera;
         let uniform = self.camera.as_mut();
         uniform.set_focal(camera.projection.focal(render_settings.viewport));
@@ -159,41 +161,37 @@ impl GaussianRenderer {
 
         let wgs_x = (pc.num_points() as f32 / 256.0).ceil() as u32;
 
-        let batch_size: u32 = 4096;
+        // 65536
+        let batch_size: u32 = 65536;
 
         let mut count = 0;
 
-        self.preprocess.run(
-            encoder,
-            pc,
-            &self.camera,
-            &self.render_settings,
-            depth_buffer,
-            queue,
-            0,
-            wgs_x
-        );
+        while count < wgs_x {
+            let start = count;
 
-        // TODO : Run in loop and keep syncing pre_process args
-        // while count < wgs_x {
-        //     let start = count;
+            let end = min(batch_size, wgs_x - count);
 
-        //     let end = min(batch_size, wgs_x - count);
+            // !FIX : buffer won't be synced till the queue is submitted (according to the docs of queue.write_buffer)
+            // !FIX : this means all iterations of this loop when dispatched have start as 0 in the compute shader
+            // !FIX : which results in a partially loaded scene, maybe use a gpu writable buffer ?
+            let settings_uniform = self.render_settings.as_mut();
+            settings_uniform.batch_start_index = start;
+            self.render_settings.sync(queue);
 
-        //     // Is this blocking ?
-        //     self.preprocess.run(
-        //         encoder,
-        //         pc,
-        //         &self.camera,
-        //         &self.render_settings,
-        //         depth_buffer,
-        //         queue,
-        //         start,
-        //         end
-        //     );
+            // Is this blocking ?
+            self.preprocess.run(
+                encoder,
+                pc,
+                &self.camera,
+                &self.render_settings,
+                depth_buffer,
+                end
+            );
 
-        //     count += end;
-        // }
+            count += end;
+
+            log::info!("Processing batch till = {start}");
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -259,11 +257,13 @@ impl GaussianRenderer {
         if let Some(stopwatch) = stopwatch {
             stopwatch.start(encoder, "sorting").unwrap();
         }
+
         self.sorter.record_sort_indirect(
             &self.sorter_suff.as_ref().unwrap().sorter_bg,
             &self.sorter_suff.as_ref().unwrap().sorter_dis,
             encoder,
         );
+
         if let Some(stopwatch) = stopwatch {
             stopwatch.stop(encoder, "sorting").unwrap();
         }
@@ -373,8 +373,7 @@ impl CameraUniform {
 }
 
 struct PreprocessPipeline { 
-    pipeline: wgpu::ComputePipeline, 
-    args: UniformBuffer<PreProcessArgsUniform> 
+    pipeline: wgpu::ComputePipeline
 }
 
 impl PreprocessPipeline {
@@ -389,8 +388,7 @@ impl PreprocessPipeline {
                     PointCloud::bind_group_layout_compressed(device)
                 },
                 &GPURSSorter::bind_group_layout_preprocess(device),
-                &UniformBuffer::<SplattingArgsUniform>::bind_group_layout(device),
-                &UniformBuffer::<PreProcessArgsUniform>::bind_group_layout(device)
+                &UniformBuffer::<SplattingArgsUniform>::bind_group_layout(device)
             ],
             push_constant_ranges: &[],
         });
@@ -406,11 +404,7 @@ impl PreprocessPipeline {
             entry_point: "preprocess",
         });
         Self { 
-            pipeline, 
-            args: UniformBuffer::new_default(
-                device,
-                Some("render settings uniform buffer"),
-            ) 
+            pipeline
         }
     }
 
@@ -426,7 +420,7 @@ impl PreprocessPipeline {
         {:}",
             sh_deg, shader_src
         );
-        return shader;
+        shader
     }
 
     fn run<'a>(
@@ -436,8 +430,6 @@ impl PreprocessPipeline {
         camera: &UniformBuffer<CameraUniform>,
         render_settings: &UniformBuffer<SplattingArgsUniform>,
         sort_bg: &wgpu::BindGroup,
-        queue: &wgpu::Queue,
-        batch_start: u32,
         batch_count: u32
     ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -445,16 +437,11 @@ impl PreprocessPipeline {
             ..Default::default()
         });
 
-        let settings_uniform = self.args.as_mut();
-        *settings_uniform = PreProcessArgsUniform::new(batch_start);
-        self.args.sync(queue); 
-
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, camera.bind_group(), &[]);
         pass.set_bind_group(1, pc.bind_group(), &[]);
         pass.set_bind_group(2, &sort_bg, &[]);
         pass.set_bind_group(3, render_settings.bind_group(), &[]);
-        pass.set_bind_group(4, self.args.bind_group(), &[]);
 
         pass.dispatch_workgroups(batch_count, 1, 1);
     }
@@ -762,6 +749,7 @@ pub struct SplattingArgsUniform {
     _pad: u32,
 
     scene_center: Vector4<f32>,
+    batch_start_index: u32
 }
 
 impl SplattingArgsUniform {
@@ -794,6 +782,7 @@ impl SplattingArgsUniform {
                 .scene_extend
                 .unwrap_or(pc.bbox().radius())
                 .max(pc.bbox().radius()),
+            batch_start_index: 0,
             ..Default::default()
         }
     }
@@ -818,24 +807,7 @@ impl Default for SplattingArgsUniform {
             scene_center: Vector4::new(0., 0., 0., 0.),
             scene_extend: 1.,
             _pad: 0,
+            batch_start_index: 0,
         }
-    }
-}
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct PreProcessArgsUniform {
-    batch_start_index: u32
-}
-
-impl PreProcessArgsUniform {
-    pub fn new(batch_start_index: u32) -> Self {
-        Self {batch_start_index}
-    }
-}
-
-impl Default for PreProcessArgsUniform {
-    fn default() -> Self {
-        Self { batch_start_index: 0 }
     }
 }
