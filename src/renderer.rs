@@ -12,7 +12,7 @@ use std::hash::{Hash, Hasher};
 use std::num::NonZeroU64;
 use std::time::Duration;
 
-use wgpu::{include_wgsl, Extent3d, MultisampleState};
+use wgpu::{include_wgsl, Extent3d, MultisampleState, PushConstantRange, ShaderStages};
 
 use cgmath::{EuclideanSpace, Matrix4, Point3, SquareMatrix, Vector2, Vector4};
 
@@ -162,7 +162,7 @@ impl GaussianRenderer {
         let wgs_x = (pc.num_points() as f32 / 256.0).ceil() as u32;
 
         // 65536
-        let batch_size: u32 = 65536;
+        let batch_size: u32 = 4096 * 2;
 
         let mut count = 0;
 
@@ -174,9 +174,9 @@ impl GaussianRenderer {
             // !FIX : buffer won't be synced till the queue is submitted (according to the docs of queue.write_buffer)
             // !FIX : this means all iterations of this loop when dispatched have start as 0 in the compute shader
             // !FIX : which results in a partially loaded scene, maybe use a gpu writable buffer ?
-            let settings_uniform = self.render_settings.as_mut();
-            settings_uniform.batch_start_index = start;
-            self.render_settings.sync(queue);
+            // let settings_uniform = self.render_settings.as_mut();
+            // settings_uniform.batch_start_index = start;
+            // self.render_settings.sync(queue);
 
             // Is this blocking ?
             self.preprocess.run(
@@ -185,6 +185,7 @@ impl GaussianRenderer {
                 &self.camera,
                 &self.render_settings,
                 depth_buffer,
+                start,
                 end
             );
 
@@ -250,6 +251,7 @@ impl GaussianRenderer {
         }
 
         self.preprocess(encoder, queue, &pc, render_settings);
+
         if let Some(stopwatch) = stopwatch {
             stopwatch.stop(encoder, "preprocess").unwrap();
         }
@@ -390,19 +392,24 @@ impl PreprocessPipeline {
                 &GPURSSorter::bind_group_layout_preprocess(device),
                 &UniformBuffer::<SplattingArgsUniform>::bind_group_layout(device)
             ],
-            push_constant_ranges: &[],
+            push_constant_ranges: &[PushConstantRange {
+                stages: ShaderStages::COMPUTE,
+                range: 0..std::mem::size_of::<u32>() as u32
+            }],
         });
 
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("preprocess shader"),
             source: wgpu::ShaderSource::Wgsl(Self::build_shader(sh_deg, compressed).into()),
         });
+
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("preprocess pipeline"),
             layout: Some(&pipeline_layout),
             module: &shader,
             entry_point: "preprocess",
         });
+
         Self { 
             pipeline
         }
@@ -430,6 +437,7 @@ impl PreprocessPipeline {
         camera: &UniformBuffer<CameraUniform>,
         render_settings: &UniformBuffer<SplattingArgsUniform>,
         sort_bg: &wgpu::BindGroup,
+        batch_start: u32,
         batch_count: u32
     ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -442,6 +450,8 @@ impl PreprocessPipeline {
         pass.set_bind_group(1, pc.bind_group(), &[]);
         pass.set_bind_group(2, &sort_bg, &[]);
         pass.set_bind_group(3, render_settings.bind_group(), &[]);
+
+        pass.set_push_constants(0, bytemuck::bytes_of(&batch_start));
 
         pass.dispatch_workgroups(batch_count, 1, 1);
     }
@@ -749,7 +759,6 @@ pub struct SplattingArgsUniform {
     _pad: u32,
 
     scene_center: Vector4<f32>,
-    batch_start_index: u32
 }
 
 impl SplattingArgsUniform {
@@ -782,7 +791,6 @@ impl SplattingArgsUniform {
                 .scene_extend
                 .unwrap_or(pc.bbox().radius())
                 .max(pc.bbox().radius()),
-            batch_start_index: 0,
             ..Default::default()
         }
     }
@@ -807,7 +815,6 @@ impl Default for SplattingArgsUniform {
             scene_center: Vector4::new(0., 0., 0., 0.),
             scene_extend: 1.,
             _pad: 0,
-            batch_start_index: 0,
         }
     }
 }

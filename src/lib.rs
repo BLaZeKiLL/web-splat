@@ -89,6 +89,7 @@ impl WGPUContext {
         let required_features = wgpu::Features::default();
         #[cfg(not(target_arch = "wasm32"))]
         let required_features = wgpu::Features::TIMESTAMP_QUERY
+            | wgpu::Features::PUSH_CONSTANTS
             | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
             | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
 
@@ -102,6 +103,7 @@ impl WGPUContext {
                         max_buffer_size: (1 << 30) - 1,
                         max_storage_buffers_per_shader_stage: 12,
                         max_compute_workgroup_storage_size: 1 << 15,
+                        max_push_constant_size: 4,
                         ..Default::default()
                     },
 

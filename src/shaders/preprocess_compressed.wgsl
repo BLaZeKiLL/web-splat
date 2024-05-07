@@ -102,8 +102,7 @@ struct RenderSettings {
     kernel_size: f32,
     walltime: f32,
     scene_extend: f32,
-    center: vec3<f32>,
-    batch_start_index: u32
+    center: vec3<f32>
 }
 
 @group(0) @binding(0)
@@ -134,6 +133,9 @@ var<storage, read_write> sort_dispatch: DispatchIndirect;
 
 @group(3) @binding(0)
 var<uniform> render_settings: RenderSettings;
+
+// let's see if this works
+var<push_constant> batch_start_index: u32;
 
 fn dequantize(value: i32, quantization: Quantization) -> f32 {
     return (f32(value) - f32(quantization.zero_point)) * quantization.scaling;
@@ -206,7 +208,7 @@ fn evaluate_sh(dir: vec3<f32>, v_idx: u32, sh_deg: u32) -> vec3<f32> {
 
 @compute @workgroup_size(256,1,1)
 fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgroups) wgs: vec3<u32>) {
-    let idx = render_settings.batch_start_index + gid.x;
+    let idx = batch_start_index + gid.x;
     if idx >= arrayLength(&vertices) {
         return;
     }
@@ -312,7 +314,9 @@ fn preprocess(@builtin(global_invocation_id) gid: vec3<u32>, @builtin(num_workgr
     );
 
     let store_idx = atomicAdd(&sort_infos.keys_size, 1u);
+
     let v = vec4<f32>(v1 / viewport, v2 / viewport);
+    
     points_2d[store_idx] = Splat(
         pack2x16float(v.xy), pack2x16float(v.zw),
         pack2x16float(v_center.xy),
