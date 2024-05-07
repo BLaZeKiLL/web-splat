@@ -7,6 +7,7 @@ use crate::{
     uniform::UniformBuffer,
 };
 
+use std::cmp::min;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -156,14 +157,43 @@ impl GaussianRenderer {
         );
         let depth_buffer = &self.sorter_suff.as_ref().unwrap().sorter_bg_pre;
 
-        // TODO : Run in loop and keep syncing pre_process args
+        let wgs_x = (pc.num_points() as f32 / 256.0).ceil() as u32;
+
+        let batch_size: u32 = 4096;
+
+        let mut count = 0;
+
         self.preprocess.run(
             encoder,
             pc,
             &self.camera,
             &self.render_settings,
             depth_buffer,
+            queue,
+            0,
+            wgs_x
         );
+
+        // TODO : Run in loop and keep syncing pre_process args
+        // while count < wgs_x {
+        //     let start = count;
+
+        //     let end = min(batch_size, wgs_x - count);
+
+        //     // Is this blocking ?
+        //     self.preprocess.run(
+        //         encoder,
+        //         pc,
+        //         &self.camera,
+        //         &self.render_settings,
+        //         depth_buffer,
+        //         queue,
+        //         start,
+        //         end
+        //     );
+
+        //     count += end;
+        // }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -406,11 +436,19 @@ impl PreprocessPipeline {
         camera: &UniformBuffer<CameraUniform>,
         render_settings: &UniformBuffer<SplattingArgsUniform>,
         sort_bg: &wgpu::BindGroup,
+        queue: &wgpu::Queue,
+        batch_start: u32,
+        batch_count: u32
     ) {
         let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("preprocess compute pass"),
             ..Default::default()
         });
+
+        let settings_uniform = self.args.as_mut();
+        *settings_uniform = PreProcessArgsUniform::new(batch_start);
+        self.args.sync(queue); 
+
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, camera.bind_group(), &[]);
         pass.set_bind_group(1, pc.bind_group(), &[]);
@@ -418,8 +456,7 @@ impl PreprocessPipeline {
         pass.set_bind_group(3, render_settings.bind_group(), &[]);
         pass.set_bind_group(4, self.args.bind_group(), &[]);
 
-        let wgs_x = (pc.num_points() as f32 / 256.0).ceil() as u32;
-        pass.dispatch_workgroups(wgs_x, 1, 1);
+        pass.dispatch_workgroups(batch_count, 1, 1);
     }
 }
 
@@ -789,6 +826,12 @@ impl Default for SplattingArgsUniform {
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct PreProcessArgsUniform {
     batch_start_index: u32
+}
+
+impl PreProcessArgsUniform {
+    pub fn new(batch_start_index: u32) -> Self {
+        Self {batch_start_index}
+    }
 }
 
 impl Default for PreProcessArgsUniform {
