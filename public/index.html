@@ -155,8 +155,8 @@
         let init_promise = init();
 
         let params = new URLSearchParams(window.location.search);
-        let scene_file = params.get("scene");
-        let pc_file = params.get("file");
+        let scene_file = params.get("scene") ?? "./scenes/large/cameras.json";
+        let pc_file = params.get("file") ?? "./scenes/large/point_cloud/iteration_35000/point_cloud.npz";
 
 
         function wihtProgress(response) {

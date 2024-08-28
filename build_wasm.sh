@@ -1,4 +1,3 @@
-export RUSTFLAGS=--cfg=web_sys_unstable_apis 
 cargo build \
     --no-default-features \
     --target wasm32-unknown-unknown \
